@@ -290,7 +290,7 @@ current phase. Document every significant decision in docs/decisions.md.
 - [ ] Extract DXF entrance entities for buildings 1, 23, 24, 25, 26, 175, 210
 - [ ] Print all DXF layer names for each building; document which contain entrance geometry
 - [ ] Run CRS audit: confirm Buildings_Mask.shp CRS; check all rasters match
-- [ ] Open Excel Bagawat Data From Excavation Report.xlsx; print all column names
+- [ ] Open Excel 2026 El Bagawat Database Draft 1.xlsx; print all column names
 - [ ] Confirm entrance direction column name; print value distribution
 - [ ] Verify WV-2 P001/P002/P003 tile files open with rasterio; check band counts
 - [ ] Check DEM in Generated_DEMs/Current_DEM/ opens and has expected resolution

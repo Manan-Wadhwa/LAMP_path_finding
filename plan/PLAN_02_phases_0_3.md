@@ -7,76 +7,25 @@
 
 Do this before touching any analysis. No code produces trustworthy output until this is done.
 
-### Step 0a — Inspect the DWG
+### Step 0a — Inspect the DWG [AUDIT COMPLETED]
 
-```bash
-# Try ezdxf first
-python -c "import ezdxf; doc = ezdxf.readfile('100_Data/120_SiteReport/BaseSiteCAD/SITE CAD WORKING.dwg'); print([l.dxf.name for l in doc.layers])"
+*Audit Result (2026-06-24)*: Converted drawing layers are `['0', 'BUILDINGS', 'NUMBERING', 'LW1', 'LW2', 'ABOVE', 'Defpoints']`. No layers match path/road keywords. Geometries in layers `LW1`, `LW2`, and `ABOVE` are architectural detail floor plans in Space B ($X > 200,000$, $Y < 50,000$), not pathways. **No pre-digitized paths exist in this CAD file.** Path network extraction must rely entirely on synthetic modeling (FETE, circuits, spectral). See findings in [0a_dwg_audit.md](file:///C:/Users/Public/LAMP_DataStore/ElBagawat/200_Projects/210_GSOC/code-manan/findings/0a_dwg_audit.md).
 
-# If ezdxf fails on the DWG format, convert first:
-# dwg2dxf "SITE CAD WORKING.dwg" -o working_converted.dxf   (LibreDWG, Linux)
-# Or use ODA File Converter (free, cross-platform, requires registration)
-```
+### Step 0b — Read the QGIS GCP Files [AUDIT COMPLETED]
 
-List ALL layer names. If any layer contains path/road geometry, extract it immediately —
-this becomes your highest-authority annotation layer, superseding everything else.
-Document in docs/decisions.md.
-
-Layer keywords to search (case-insensitive):
-    ROUTE, PATH, ROAD, STREET, ALLEY, WAY, CIRCULATION, PEDESTRIAN, ACCESS
-
-### Step 0b — Read the QGIS GCP Files
-
-```python
-import pandas as pd
-
-def read_qgis_gcps(filepath):
-    """Read QGIS ground control point file into DataFrame."""
-    gcps = pd.read_csv(filepath, skiprows=1,
-                       names=["mapX", "mapY", "pixelX", "pixelY", "enable"])
-    gcps = gcps[gcps.enable == 1]  # use only enabled GCPs
-    print(f"Loaded {len(gcps)} enabled GCPs from {filepath}")
-    return gcps
-
-gcp_files = [
-    "BuildingTracesCurrent/Buildings_Mask.shp.points",
-    "BuildingTracesCurrent/Buildings_Mask.shp.points1.points",
-    "BuildingTracesCurrent/Buildings_Mask.shp.points2.points",
-]
-gcp_sets = {f: read_qgis_gcps(f) for f in gcp_files}
-
-# Compare: if they agree on mapX/mapY values, use the one with most points.
-# If they disagree substantially, the later-numbered file is likely a revised registration.
-```
+*Audit Result (2026-06-24)*: Verified GCP file set relationships. The points in `points` (23 points) are a strict subset of `points1` (29 points), which are a strict subset of `points2` (32 points). Overlapping coordinate pairs match with zero difference. **`Buildings_Mask.shp.points2.points`** (32 active points) is selected as the authoritative set for georeferencing to minimize registration errors. Details are saved in [0b_gcp_selection.md](file:///C:/Users/Public/LAMP_DataStore/ElBagawat/200_Projects/210_GSOC/code-manan/findings/0b_gcp_selection.md).
 
 mapX/mapY are in working CRS; pixelX/pixelY are in PDF image coordinates.
 These GCPs are exactly what Phase 1 needs for PDF georeferencing.
 
-### Step 0c — CRS Audit
+### Step 0c — CRS Audit [AUDIT COMPLETED]
 
-```python
-import rasterio
-import geopandas as gpd
+*Audit Result (2026-06-24)*: Spatial layer coordinate references have been verified:
+- **`Buildings_Mask.shp` (footprints)**: `EPSG:32636` (WGS 84 / UTM zone 36N). Matches the working CRS.
+- **`Bagawat_ROI.shp` and `BagawatROI_Smaller.shp`**: `EPSG:4326` (Geographic WGS 84). **Must be reprojected** to `EPSG:32636` using geopandas `to_crs(epsg=32636)`.
+- **DEM and WV-2 Rasters**: `EPSG:32636` natively. No coordinate resampling required.
 
-layers = {
-    "footprints": gpd.read_file("BuildingTracesCurrent/Buildings_Mask.shp"),
-    "roi_full":   gpd.read_file("Bagawat_ROI.shp"),
-    "roi_small":  gpd.read_file("BagawatROI_Smaller.shp"),
-    "dem":        rasterio.open("Generated_DEMs/Current_DEM/[DEM_FILE].tif"),
-    # Add WV-2 sample tile:
-    "wv2_p001":   rasterio.open("140_SAR_Imagery/DigitalGlobe_2018/MONO/058239078010_01/[P001_SAMPLE].TIF"),
-}
-
-for name, layer in layers.items():
-    if hasattr(layer, "crs"):
-        print(f"{name}: {layer.crs}")
-    else:
-        print(f"{name}: {layer.meta['crs']}")
-```
-
-Working CRS = whatever Buildings_Mask.shp uses. EVERY other layer must be reprojected to
-match. Document the EPSG code (or custom proj4 string if it is a local CRS) in
-docs/decisions.md. Real-world WGS84/UTM can be back-derived later if a GPS tie-point appears.
+Details are documented in [0c_crs_audit.md](file:///C:/Users/Public/LAMP_DataStore/ElBagawat/200_Projects/210_GSOC/code-manan/findings/0c_crs_audit.md).
 
 ### Step 0d — Parse Individual DXF Files
 
@@ -127,32 +76,19 @@ for bld_num, path in dxf_files.items():
 ```
 
 Verify DXF coordinate system by overlaying one DXF footprint against Buildings_Mask.shp
-for the same building — they should coincide spatially. If they do not, compute an affine
-transform from DXF space to working CRS using matched corners.
+for the same building. *Audit Finding (2026-06-24)*: The main map coordinates (Space A, $X < 200,000$) match UTM meters via a 1:1000 scale (millimeters) and global translation. However, the individual building DXFs (Space B, $X > 200,000$) are offset and require building-specific **local translations** derived from matching the detail label 'N' text position in DXF to the building footprint centroid in the shapefile:
+$$T_x = X_{utm\_centroid} - 0.001 \times X_{dxf\_label\_insert}$$
+$$T_y = Y_{utm\_centroid} - 0.001 \times Y_{dxf\_label\_insert}$$
+Applying this translation and scale ($0.001 \times \text{dxf\_coord} + T$) aligns DXF geometry to UTM space with sub-millimeter precision (see [0a_approach_updates.md](file:///C:/Users/Public/LAMP_DataStore/ElBagawat/200_Projects/210_GSOC/code-manan/findings/0a_approach_updates.md)).
 
-### Step 0e — Inspect Excel Database
+### Step 0e — Inspect Excel Database [AUDIT COMPLETED]
 
-```python
-import pandas as pd
+*Audit Result (2026-06-24)*: Verified correct Excel database path following assistant feedback: **`100_Data/120_SiteReport/2026 El Bagawat Database Draft 1.xlsx`**.
+- **Sheet Verified**: Main database is `Database Full` sheet (342 rows, 42 columns). Columns: `Chapel Number (according to Fakhry)`, `Entrace Direction` (exact spelling), `Type`.
+- **Data Availability**: Contains **215 non-null entrance directions** (South=89, East=61, West=63, Compound=2), leaving 127 `NaN` values.
+- **Pipeline Decision**: The attribute-driven fallback strategy (Phase 3c) is highly viable and will provide offsets for 215 chapels. The remaining 127 chapels will use geometric centroids as fallbacks (confidence = 0.30).
 
-xl = pd.ExcelFile("120_SiteReport/Bagawat Data From Excavation Report.xlsx")
-print(f"Sheets: {xl.sheet_names}")
-
-db = xl.parse("Database Full")
-print(f"Database Full: {db.shape[0]} rows, {db.shape[1]} columns")
-print(db.dtypes)
-print(db.head(3))
-
-# Key column to identify:
-# - Chapel/building number column (e.g., "Chapel_No", "Num", "ID", etc.)
-# - Entrance direction column (e.g., "Entrance", "Direction", "Orient")
-# Print all columns:
-print(list(db.columns))
-
-# Distribution of entrance directions:
-if "Entrance" in db.columns:
-    print(db["Entrance"].value_counts())
-```
+Details are saved in [0e_excel_audit.md](file:///C:/Users/Public/LAMP_DataStore/ElBagawat/200_Projects/210_GSOC/code-manan/findings/0e_excel_audit.md).
 
 ### Environment Libraries Required
 
@@ -378,14 +314,14 @@ print(footprints.head(5))
 ### 2c — Extract Chapel Numbers from Excel
 
 ```python
-xl = pd.ExcelFile("Bagawat Data From Excavation Report.xlsx")
+xl = pd.ExcelFile("2026 El Bagawat Database Draft 1.xlsx")
 db = xl.parse("Database Full")
 
 # Find the chapel number column — inspect column names carefully
 print(list(db.columns))
 
 # Extract chapel numbers and clean
-chapel_col = "Chapel_No"  # UPDATE with actual column name after inspection
+chapel_col = "Chapel Number (according to Fakhry)"  # Updated from audit
 chapel_ids = db[chapel_col].dropna().astype(str).str.strip()
 print(f"Excel chapel count: {len(chapel_ids)}")
 print(f"Sample: {chapel_ids.head(10).tolist()}")
@@ -774,15 +710,15 @@ def entrance_from_direction(polygon, direction_str):
     from shapely.geometry import Point
     return Point(best_pt)
 
-def derive_all_entrances(footprints_gdf, excel_db, crosswalk_df, entrance_dir_col):
+def derive_all_entrances(footprints_gdf, excel_db, crosswalk_df, entrace_dir_col):
     """
     Derive entrance points for all chapels using recorded entrance direction.
     """
     results = []
     
     for _, chapel_row in excel_db.iterrows():
-        chapel_id = str(chapel_row["chapel_id_col"]).strip()  # UPDATE col name
-        direction = chapel_row.get(entrance_dir_col, None)
+        chapel_id = str(chapel_row["Chapel Number (according to Fakhry)"]).strip()  # Updated from audit
+        direction = chapel_row.get(entrace_dir_col, None)
         
         # Find matching footprint via crosswalk
         cw_row = crosswalk_df[crosswalk_df["chapel_ids"].str.contains(chapel_id)]

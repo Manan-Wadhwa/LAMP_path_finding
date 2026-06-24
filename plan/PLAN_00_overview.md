@@ -96,7 +96,7 @@ that every other layer must align to.
 
 | File | Format | Size | Notes |
 |---|---|---|---|
-| Bagawat Data From Excavation Report.xlsx | Excel, 3 sheets | 22 KB | Primary chapel attribute DB: 342 records, entrance directions, typology |
+| 2026 El Bagawat Database Draft 1.xlsx | Excel, 3 sheets | 22 KB | Primary chapel attribute DB: 342 records, entrance directions, typology |
 | bagawat print.pdf | PDF | 1.4 GB | Hand-annotated site plan with light-blue entrance ticks. Primary human-labelled source. |
 | SiteReport_missing9-12.pdf | PDF | 617 MB | Supplementary report; inspect for additional entrance/path annotation |
 | BaseSiteCAD/Building1.dxf | DXF | 119 KB | Individual building CAD for building 1 |

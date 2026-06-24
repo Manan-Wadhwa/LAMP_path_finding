@@ -63,7 +63,7 @@ Both have accompanying `.prj` files defining the working CRS. Read these first i
 
 | File | Format | Critical notes |
 |---|---|---|
-| `Bagawat Data From Excavation Report.xlsx` | Excel, 3 sheets | Primary chapel attribute database: 342 records, entrance directions, typology, condition |
+| `2026 El Bagawat Database Draft 1.xlsx` | Excel, 3 sheets | Primary chapel attribute database: 342 records, entrance directions, typology, condition |
 | `bagawat print.pdf` | PDF | The hand-annotated site plan with light-blue entrance ticks. The primary human-labelled data source. |
 | `SiteReport_missing9-12.pdf` | PDF | Supplementary report pages; inspect for additional entrance or path annotation |
 | `BaseSiteCAD/Building1.dxf` | DXF | Individual building CAD; contains precise geometry layers for building 1 |
