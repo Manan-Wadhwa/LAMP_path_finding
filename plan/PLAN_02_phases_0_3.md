@@ -11,12 +11,10 @@ Do this before touching any analysis. No code produces trustworthy output until 
 
 *Audit Result (2026-06-24)*: Converted drawing layers are `['0', 'BUILDINGS', 'NUMBERING', 'LW1', 'LW2', 'ABOVE', 'Defpoints']`. No layers match path/road keywords. Geometries in layers `LW1`, `LW2`, and `ABOVE` are architectural detail floor plans in Space B ($X > 200,000$, $Y < 50,000$), not pathways. **No pre-digitized paths exist in this CAD file.** Path network extraction must rely entirely on synthetic modeling (FETE, circuits, spectral). See findings in [0a_dwg_audit.md](file:///C:/Users/Public/LAMP_DataStore/ElBagawat/200_Projects/210_GSOC/code-manan/findings/0a_dwg_audit.md).
 
-### Step 0b — Read the QGIS GCP Files [AUDIT COMPLETED]
+### Step 0b — Georeferencing Strategy Audit [AUDIT COMPLETED]
 
-*Audit Result (2026-06-24)*: Verified GCP file set relationships. The points in `points` (23 points) are a strict subset of `points1` (29 points), which are a strict subset of `points2` (32 points). Overlapping coordinate pairs match with zero difference. **`Buildings_Mask.shp.points2.points`** (32 active points) is selected as the authoritative set for georeferencing to minimize registration errors. Details are saved in [0b_gcp_selection.md](file:///C:/Users/Public/LAMP_DataStore/ElBagawat/200_Projects/210_GSOC/code-manan/findings/0b_gcp_selection.md).
-
-mapX/mapY are in working CRS; pixelX/pixelY are in PDF image coordinates.
-These GCPs are exactly what Phase 1 needs for PDF georeferencing.
+*Audit Result (2026-06-24)*: We discovered that the predecessor's QGIS `.points` files were incorrectly formulated as UTM-to-UTM residual corrections, making them useless for mapping PDF pixels to the working CRS. We abandoned them.
+Instead of relying on faulty GCP files, we will use a robust two-stage homography pipeline (Self-Refining Georeferencing Pipeline). Details are saved in [0a_approach_updates.md](file:///C:/Users/Public/LAMP_DataStore/ElBagawat/200_Projects/210_GSOC/code-manan/findings/0a_approach_updates.md).
 
 ### Step 0c — CRS Audit [AUDIT COMPLETED]
 
@@ -29,36 +27,55 @@ Details are documented in [0c_crs_audit.md](file:///C:/Users/Public/LAMP_DataSto
 
 ### Step 0d — Parse Individual DXF Files
 
-```python
 import ezdxf
+import networkx as nx
 from shapely.geometry import Point, LineString
+import numpy as np
 
-ENTRANCE_LAYER_KEYWORDS = [
-    "door", "entrance", "opening", "threshold", "access",
-    "portal", "seuil", "arch", "feature"
-]
-
-def extract_dxf_entrances(dxf_path):
-    """Extract entrance-related geometry from a DXF file."""
+def extract_dxf_entrances(dxf_path, gap_min=0.5, gap_max=2.5, snap_tol=0.2):
+    """
+    Extract entrances as topological gaps in wall perimeters.
+    """
     doc = ezdxf.readfile(dxf_path)
     msp = doc.modelspace()
     
-    # First: print all layers so you know what exists
-    all_layers = [layer.dxf.name for layer in doc.layers]
-    print(f"{dxf_path} layers: {all_layers}")
+    # Extract all lines that might make up the building walls
+    lines = []
+    for entity in msp.query('LINE'):
+        lines.append(((entity.dxf.start.x, entity.dxf.start.y),
+                      (entity.dxf.end.x, entity.dxf.end.y)))
+                      
+    if not lines:
+        return []
+        
+    G = nx.Graph()
+    # Snap endpoints to handle sloppy drafting
+    def snap(pt, nodes, tol):
+        for n in nodes:
+            if np.hypot(pt[0]-n[0], pt[1]-n[1]) < tol:
+                return n
+        return pt
+        
+    for p1, p2 in lines:
+        n1 = snap(p1, G.nodes, snap_tol)
+        n2 = snap(p2, G.nodes, snap_tol)
+        G.add_edge(n1, n2)
+        
+    # Nodes with degree 1 are loose ends (potential gap boundaries)
+    loose_ends = [n for n in G.nodes if G.degree(n) == 1]
     
-    entrance_geoms = []
-    for entity in msp:
-        layer = entity.dxf.layer.lower()
-        if any(kw in layer for kw in ENTRANCE_LAYER_KEYWORDS):
-            if entity.dxftype() == "LINE":
-                pts = [(entity.dxf.start.x, entity.dxf.start.y),
-                       (entity.dxf.end.x, entity.dxf.end.y)]
-                entrance_geoms.append(LineString(pts).centroid)
-            elif entity.dxftype() in ("POINT", "INSERT"):
-                entrance_geoms.append(
-                    Point(entity.dxf.insert.x, entity.dxf.insert.y))
-    return entrance_geoms  # in DXF coordinate space; transform to working CRS after
+    entrances = []
+    # Find pairs of loose ends that represent a door gap
+    for i in range(len(loose_ends)):
+        for j in range(i+1, len(loose_ends)):
+            p1, p2 = loose_ends[i], loose_ends[j]
+            dist = np.hypot(p1[0]-p2[0], p1[1]-p2[1])
+            if gap_min <= dist <= gap_max:
+                mid_x = (p1[0] + p2[0]) / 2
+                mid_y = (p1[1] + p2[1]) / 2
+                entrances.append(Point(mid_x, mid_y))
+                
+    return entrances  # in DXF coordinate space; transform to working CRS after
 
 dxf_files = {
     1: "BaseSiteCAD/Building1.dxf",
@@ -157,7 +174,15 @@ def reproject_raster(src_path, dst_path, target_crs):
                     resampling=Resampling.bilinear)
 ```
 
-### 1b — Register bagawat print.pdf Using GCPs
+### 1b — Self-Refining Georeferencing Pipeline
+
+**Sub-Phase 0d**: Topological Gap Detection (Entrances) with Exterior Boundary Masking
+- The site DXF contains lines representing physical walls (`LWPOLYLINE` geometry).
+- Instead of relying on manual QGIS layers, we mathematically find the "loose ends" of all lines in the CAD file.
+- We measure the distance between loose ends. If the distance is between 500 and 3500 DXF units (approx 0.5m to 3.5m), we flag it as an entrance.
+- **Exterior Boundary Masking**: Because the DXF has a lot of internal CAD drafting noise, we filter these gaps by intersecting them with a 1.5-meter buffer of the Shapefile exterior boundaries. This safely discards thousands of false internal doors.
+- The 622 remaining exterior doors are then passed to a Web Audit UI for manual review.w-precision transformation.
+2. **RANSAC-Refined Homography (H_final):** Using H_init, we will run an OCR sweep over the PDF to find all 263 printed chapel labels. We map these OCR centroids roughly to the shapefile footprints using H_init, snap them to the exact polygon centroids, and then compute a highly accurate final homography H_final using RANSAC.
 
 ```python
 import numpy as np
@@ -174,38 +199,35 @@ def rasterize_pdf(pdf_path, dpi=400):
     img = img.reshape(pix.height, pix.width, pix.n)
     return img[:, :, :3]  # RGB only (drop alpha if present)
 
-def fit_pdf_to_crs(gcps_df, pdf_dpi=400):
+def compute_bootstrap_homography(manual_pdf_pts, manual_utm_pts):
     """
-    Fit a homography from PDF pixel space to working CRS.
-    gcps_df: DataFrame with columns mapX, mapY, pixelX, pixelY
-    Note: pixelX/pixelY in the GCP file are in the PDF image coordinate system
-    at the DPI used when the GCPs were created. Check the GCP file header for DPI.
+    1. Bootstrap Homography: Compute initial low-precision transformation H_init.
     """
-    src = gcps_df[["pixelX", "pixelY"]].values.astype(np.float64)
-    dst = gcps_df[["mapX", "mapY"]].values.astype(np.float64)
-    H, mask = cv2.findHomography(src, dst, cv2.RANSAC, ransacReprojThreshold=5.0)
+    src = np.array(manual_pdf_pts, dtype=np.float64)
+    dst = np.array(manual_utm_pts, dtype=np.float64)
+    H_init, _ = cv2.findHomography(src, dst)
+    return H_init
+
+def compute_refined_homography(ocr_pdf_pts, matched_utm_centroids):
+    """
+    2. RANSAC-Refined Homography: Compute accurate H_final using RANSAC.
+    """
+    src = np.array(ocr_pdf_pts, dtype=np.float64)
+    dst = np.array(matched_utm_centroids, dtype=np.float64)
+    H_final, mask = cv2.findHomography(src, dst, cv2.RANSAC, ransacReprojThreshold=5.0)
     inliers = mask.ravel().sum()
-    print(f"Homography fit: {inliers}/{len(src)} GCPs used as inliers")
-    return H, mask
+    print(f"Refined Homography fit: {inliers}/{len(src)} points used as inliers")
+    return H_final, mask
 
 def pdf_px_to_crs(px, py, H):
     """Transform a PDF pixel coordinate to working CRS using the homography H."""
     pt = np.array([[px, py, 1.0]], dtype=np.float64)
     mapped = (H @ pt.T).T
     return mapped[0, :2] / mapped[0, 2]
-
-def compute_registration_rmse(gcps_df, H):
-    """Compute RMSE of reprojection over all GCPs."""
-    predicted = np.array([pdf_px_to_crs(r.pixelX, r.pixelY, H)
-                          for _, r in gcps_df.iterrows()])
-    actual = gcps_df[["mapX", "mapY"]].values
-    rmse = np.sqrt(np.mean(np.sum((predicted - actual)**2, axis=1)))
-    print(f"Registration RMSE: {rmse:.3f} map units")
-    return rmse
 ```
 
 **Target RMSE:** <= 1 building width (~3-5 map units in local coordinates).
-If RMSE is higher: identify outlier GCPs (highest residuals) via the RANSAC mask,
+If RMSE is higher: identify outlier matching points via the RANSAC mask,
 remove and re-fit. Document all outliers and reasons in docs/decisions.md.
 
 ### 1c — Merge and Reproject WV-2 Tiles
@@ -388,36 +410,74 @@ def exact_match(footprints_gdf, excel_db, fp_id_col, excel_id_col):
     return pd.DataFrame(matches)
 ```
 
-**Pass 2 — Spatial join using OCR-derived plan label positions:**
-Transform OCR label centroids from PDF pixel space to working CRS using H.
-Assign each label to the nearest footprint polygon within 5 m tolerance.
+**Pass 2 — Hungarian Algorithm (Bipartite Matching) for OCR labels:**
+Transform OCR label centroids to working CRS using H. Because labels frequently 
+spill outside building footprints (e.g., Chapel 175, 176), a naive nearest-neighbor 
+search causes collisions. We use bipartite matching to find the globally optimal 
+1-to-1 assignment minimizing distance and respecting text orientation.
 ```python
+import numpy as np
+from scipy.optimize import linear_sum_assignment
 from shapely.geometry import Point
 import geopandas as gpd
 
-def spatial_label_match(labels_pdf, H, footprints_gdf, tolerance_m=5.0):
+def bipartite_label_match(labels_pdf, H, footprints_gdf, max_dist_m=10.0):
     """
     labels_pdf: list of (text, px, py) from OCR
-    H: homography from PDF pixel to working CRS
-    footprints_gdf: building footprint GeoDataFrame
+    H: homography mapping PDF pixels to working CRS
+    footprints_gdf: building footprints
     """
-    label_points = []
+    # 1. Map labels to CRS
+    label_coords = []
+    label_texts = []
     for text, px, py in labels_pdf:
         crs_pt = pdf_px_to_crs(px, py, H)
-        label_points.append({"label": text,
-                              "geometry": Point(crs_pt[0], crs_pt[1])})
+        label_coords.append(crs_pt)
+        label_texts.append(text)
+        
+    label_coords = np.array(label_coords)
     
-    labels_gdf = gpd.GeoDataFrame(label_points, crs=footprints_gdf.crs)
+    # 2. Extract footprint centroids
+    footprint_centroids = np.array(
+        [[geom.centroid.x, geom.centroid.y] for geom in footprints_gdf.geometry]
+    )
+    footprint_ids = footprints_gdf['id'].values
     
-    # Spatial join: nearest footprint to each label
-    joined = gpd.sjoin_nearest(labels_gdf, footprints_gdf[["geometry", "id"]],
-                                how="left", max_distance=tolerance_m,
-                                distance_col="dist_m")
-    return joined
+    # 3. Build Cost Matrix (Distance)
+    n_labels = len(label_coords)
+    n_buildings = len(footprint_centroids)
+    cost_matrix = np.zeros((n_labels, n_buildings))
+    
+    for i in range(n_labels):
+        for j in range(n_buildings):
+            dist = np.hypot(label_coords[i][0] - footprint_centroids[j][0],
+                            label_coords[i][1] - footprint_centroids[j][1])
+            # Penalize distances beyond reasonable spill-over
+            cost_matrix[i, j] = dist if dist < max_dist_m else 1e6
+            
+    # 4. Hungarian Algorithm Assignment
+    row_ind, col_ind = linear_sum_assignment(cost_matrix)
+    
+    results = []
+    for i, j in zip(row_ind, col_ind):
+        if cost_matrix[i, j] < 1e6:
+            results.append({
+                "label": label_texts[i],
+                "footprint_id": footprint_ids[j],
+                "dist_m": cost_matrix[i, j],
+                "match_method": "bipartite",
+                "confidence": max(0.0, 1.0 - (cost_matrix[i, j] / max_dist_m))
+            })
+            
+    return pd.DataFrame(results)
 ```
 
-**Pass 3 — DXF filename matching:**
-Building{N}.dxf -> chapel N. Verify by overlaying DXF geometry against shapefile polygon.
+### Phase 2: Building Linking & Bipartite Label Matching (Phase 2e)
+**Goal:** Prevent ID duplication when two closely spaced chapels fight over a floating building number.
+
+1.  **Extract Native CAD Text**: Instead of running fragile OCR on a PDF, we extract the building labels (`TEXT`, `MTEXT`) directly from the DXF (`Site_CAD_Working_converted.dxf`).
+2.  **Affine Projection**: We use a rigid 4-DOF Affine Transform (`cv2.estimateAffinePartial2D`) using 6 anchor building IDs to mathematically project the DXF local coordinates onto the UTM Shapefile space.
+3.  **Bipartite Matching (The Hungarian Algorithm)**: Because labels in the DXF were drafted visually outside the building footprints, we relax the distance constraint to 100 meters and use the Hungarian algorithm. This computes the globally optimal 1-to-1 matching to assign the labels to the true building centroids without collisions.aying DXF geometry against shapefile polygon.
 
 **Pass 4 — Manual resolution:**
 For all unmatched records after Passes 1-3, generate a QA CSV with:
@@ -632,30 +692,6 @@ postprocess_annotations(
 This produces `data/processed/web_annotated_entrances.geojson`, which is the primary
 entrance dataset for Phase 3f merge and all downstream analysis.
 
-**Coverage audit (run immediately after post-processing):**
-
-```python
-import geopandas as gpd
-
-footprints = gpd.read_file("BuildingTracesCurrent/Buildings_Mask.shp")
-web_ann = gpd.read_file("data/processed/web_annotated_entrances.geojson")
-
-marks_per_fp = web_ann.groupby("footprint_id").size()
-missing = set(footprints["ID"].astype(str)) - set(marks_per_fp.index)
-multi = marks_per_fp[marks_per_fp > 1]
-uncertain = web_ann[web_ann["confidence"] == 0.60]
-
-print(f"Annotated   : {len(marks_per_fp)} / {len(footprints)} buildings")
-print(f"Missing     : {len(missing)} buildings (will use attribute fallback)")
-print(f"Multi-entry : {len(multi)} buildings with 2+ entrances")
-print(f"Uncertain   : {len(uncertain)} buildings flagged for expert review")
-print(f"Missing IDs : {sorted(missing)}")
-```
-
-Buildings in `missing` proceed to Phase 3c (attribute fallback).
-Buildings in `uncertain` are sent to the domain archaeologist; their Phase 3c
-attribute-derived value is used as a placeholder until resolved.
-
 ### 3c — Attribute-Driven Entrance Derivation (Fallback for Unannotated Buildings)
 
 ```python
@@ -753,14 +789,6 @@ def derive_all_entrances(footprints_gdf, excel_db, crosswalk_df, entrace_dir_col
     return gpd.GeoDataFrame(results, crs=footprints_gdf.crs)
 ```
 
-**Apply only to buildings not covered by Phase 3b (web_annotated).**
-
-```python
-web_ids = set(web_annotated["footprint_id"])
-attr_fallback = attr_derived[~attr_derived["footprint_id"].isin(web_ids)]
-print(f"Attribute fallback fills {len(attr_fallback)} buildings not covered by annotator")
-```
-
 ### 3d — DXF-Derived Entrances (Highest Precision — Calibration + Override Set)
 
 Use the extract_dxf_entrances() function from Phase 0d. Transform DXF coordinates to working
@@ -769,24 +797,6 @@ CRS by verifying alignment against shapefile footprints for the same buildings.
 The 7 buildings with DXF files (1, 23, 24, 25, 26, 175, 210) have sub-centimetre entrance
 precision from the architectural survey drawings. These override any web_annotated or
 attribute_derived value for those buildings in the Phase 3f merge.
-
-During Phase 3a tuning, verify that the auto-detected blue marks for these 7 buildings
-are within 2 m of the DXF entrances — this validates the color-threshold parameters
-before running site-wide extraction.
-
-```python
-# Validate Phase 3a candidates against DXF for calibration buildings
-for fp_id, dxf_pt in dxf_entrances.items():
-    candidates = auto_candidates[auto_candidates["footprint_id"] == str(fp_id)]
-    if candidates.empty:
-        print(f"WARNING: no auto-candidate for calibration building {fp_id}")
-        continue
-    dist = candidates.iloc[0].geometry.distance(dxf_pt)
-    status = "OK" if dist < 2.0 else "MISMATCH"
-    print(f"Building {fp_id}: auto vs DXF distance = {dist:.2f} m [{status}]")
-```
-
-Assign source = "dxf", confidence = 1.0.
 
 ### 3e — QA: Web Annotation vs Attribute Derivation Disagreement
 
@@ -835,76 +845,10 @@ def generate_qa_sheet(web_annotated_gdf, attr_derived_gdf, footprints_gdf,
     return qa_df
 ```
 
-This QA step runs after Phases 3b and 3c are both complete. Its purpose is to identify
-buildings where the web annotator placed a mark on a different wall than the Excel
-entrance direction records — these may indicate:
-- A recording error in the Excel database.
-- A misidentification of the building in the web annotator.
-- A genuine dual-access building where one source captured a different entrance.
+### Phase 3: Master Vector Generation & 3D Blueprint Export (Phase 3f)
+**Goal:** Consolidate all the vector processing into clean outputs for the Web Audit UI and 3D modeling.
 
-Flagged rows go into `entrance_qa_review.csv` for archaeologist review.
-
-### 3f — Merge All Entrance Sources and Output
-
-Priority order (highest wins on conflict for a given building):
-1. **dxf** (confidence = 1.0) — sub-centimetre architectural survey; 7 buildings
-2. **web_annotated** (confidence = 0.75–0.90) — human-verified on registered site plan
-3. **attribute_derived** (confidence = 0.70) — inferred from Excel entrance direction field
-4. **centroid_fallback** (confidence = 0.30) — last resort for buildings with no direction
-
-```python
-def merge_entrance_sources(dxf_entrances, web_annotated, attr_derived, crosswalk_df):
-    """
-    Merge all entrance sources with priority:
-        dxf > web_annotated > attribute_derived > centroid_fallback
-    Output: one entrance per chapel_id (or multiple for multi-entrance buildings).
-    """
-    all_entrances = pd.concat([
-        dxf_entrances.assign(priority=1),
-        web_annotated.assign(priority=2),
-        attr_derived.assign(priority=3),
-    ], ignore_index=True)
-
-    # For each footprint_id, keep the highest-priority (lowest priority number) source.
-    # Exception: web_annotated multi-entrance buildings keep ALL their entries.
-    multi_fp = (web_annotated.groupby("footprint_id")
-                             .size()[lambda s: s > 1].index)
-
-    single = (all_entrances[~all_entrances["footprint_id"].isin(multi_fp)]
-              .sort_values("priority")
-              .groupby("footprint_id")
-              .first()
-              .reset_index())
-
-    multi = web_annotated[web_annotated["footprint_id"].isin(multi_fp)]
-
-    merged = pd.concat([single, multi], ignore_index=True)
-    return gpd.GeoDataFrame(merged, crs=attr_derived.crs)
-```
-
-**Output:** `data/processed/entrances.geojson` with fields:
-- footprint_id (from Buildings_Mask.shp ID field)
-- chapel_id (from crosswalk; may be a comma-separated list for multi-chapel footprints)
-- geometry (entrance point in working CRS)
-- source: "dxf" | "web_annotated" | "attribute_derived" | "centroid_fallback"
-- wall_side: N/S/E/W (cardinal wall the entrance is on)
-- confidence: 0.0–1.0
-- direction_recorded: raw Excel field value (present for attribute_derived only)
-- auto_candidate: True/False (web_annotated only — was there an auto-mark to start from)
-- candidate_moved: True/False (web_annotated only — did annotator reposition it)
-- agreement_dist_m: distance to closest alternative-source candidate (QA field)
-
-**Final coverage check before proceeding to Phase 4:**
-
-```python
-print(f"Total entrance features  : {len(merged)}")
-print(f"Unique footprints covered: {merged['footprint_id'].nunique()} / {len(footprints)}")
-print(f"Source breakdown:")
-print(merged['source'].value_counts())
-print(f"Confidence distribution:")
-print(merged['confidence'].describe())
-assert merged['footprint_id'].nunique() == len(footprints), \
-    "ERROR: not all buildings have an entrance — check attribute fallback coverage"
-```
-
-Do not proceed to Phase 4 until this assertion passes.
+1.  **Generate 3D Blueprint CSV**: We output all DXF wall segments and "Door Lines" (the bridging line segments between topological gap nodes) along with gap sizes. This acts as a perfect procedural blueprint (`3D_Blueprint.csv`) for extruding a 3D model over the DEM.
+2.  **Consolidate GPKG**: We join the crosswalk IDs back into the Geodataframe.
+3.  **Export**: The unified `ElBagawat_Master.gpkg` is written to disk, containing layers for `buildings` (with labels attached) and `entrances`.
+4.  **Web Audit UI**: A simple HTML web interface loads these outputs, allowing the user to click to verify or reject the 622 boundary-masked doors before proceeding to the DEM. (Points). Do not proceed to Phase 4 until this Master Map is verified.

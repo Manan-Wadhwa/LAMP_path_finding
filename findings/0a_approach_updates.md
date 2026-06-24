@@ -79,3 +79,22 @@ No pre-digitized paths exist in `Site_CAD_Working_converted.dxf` or its layers (
 
 ### Approach Change
 We must explicitly document in [PLAN_02_phases_0_3.md](file:///C:/Users/Public/LAMP_DataStore/ElBagawat/200_Projects/210_GSOC/code-manan/plan/PLAN_02_phases_0_3.md) and [PLAN_03_phases_4_6.md](file:///C:/Users/Public/LAMP_DataStore/ElBagawat/200_Projects/210_GSOC/code-manan/plan/PLAN_03_phases_4_6.md) that the "shortcut" path-extraction step under Step 0a yielded no road geometries. The reconstruction of the street and alley network must rely entirely on synthetic cost-surface routing and multi-evidence network ensemble modeling.
+
+---
+
+## 4. Georeferencing Flaw and Self-Refining Pipeline
+
+### Finding
+We discovered that the predecessor's QGIS `.points` files were incorrectly formulated as UTM-to-UTM residual corrections, making them useless for mapping PDF pixels to the working CRS. We abandoned them.
+
+### Approach Change
+**Self-Refining Georeferencing Pipeline**: Instead of relying on faulty GCP files, we formulated a robust two-stage homography pipeline:
+1. **Bootstrap Homography ($H_{init}$)**: We will manually pick 4-5 easily identifiable chapel centroids (e.g., Building 25) in the PDF image to compute an initial low-precision transformation.
+2. **RANSAC-Refined Homography ($H_{final}$)**: Using $H_{init}$, we will run an OCR sweep over the PDF to find all 263 printed chapel labels, map them roughly to the shapefile footprints, snap them to the exact polygon centroids, and then compute a highly accurate final homography $H_{final}$ using RANSAC.
+
+---
+
+## 5. Stateless Web Annotator Architecture
+
+### Approach Change
+The web-based manual annotation tool (Phase 3b) will be fully stateless and coordinate-agnostic. It will operate entirely in native 2D image pixel coordinates. All heavy lifting (transforming pixels to the UTM CRS via $H$, spatial joining, and attribute matching) will be handled offline by our Python pipeline.

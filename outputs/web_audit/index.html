@@ -1,0 +1,60 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>El Bagawat Entrance Audit</title>
+    <link rel="stylesheet" href="style.css">
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;600&display=swap" rel="stylesheet">
+</head>
+<body>
+    <div id="app">
+        <aside class="sidebar glass">
+            <h1>El Bagawat Audit</h1>
+            <div class="stats">
+                <div class="stat-card">
+                    <span class="label">Total Entrances</span>
+                    <span class="value" id="total-val">0</span>
+                </div>
+                <div class="stat-card approved">
+                    <span class="label">Approved</span>
+                    <span class="value" id="approved-val">0</span>
+                </div>
+                <div class="stat-card rejected">
+                    <span class="label">Rejected</span>
+                    <span class="value" id="rejected-val">0</span>
+                </div>
+            </div>
+            
+            <div class="toggles" style="background: rgba(0,0,0,0.2); padding: 1rem; border-radius: 8px;">
+                <h3>Algorithm Selection</h3>
+                <label><input type="radio" name="doorLayer" value="og"> 1. Original (Spiderweb)</label><br>
+                <label><input type="radio" name="doorLayer" value="greedy" checked> 2. Greedy (Nearest Neighbor)</label><br>
+                <label><input type="radio" name="doorLayer" value="collinear"> 3. Collinear (Straight Walls)</label><br>
+                <label><input type="radio" name="doorLayer" value="boolean"> 4. Boolean (Perimeter Only)</label><br>
+                <label><input type="radio" name="doorLayer" value="native"> 5. Shapefile-Native</label><br>
+                <label><input type="radio" name="doorLayer" value="local"> 6. Per-Building Local Transform</label><br>
+                <label><input type="radio" name="doorLayer" value="hybrid"> 7. Edge Differencing (Hybrid)</label><br>
+                <label><input type="radio" name="doorLayer" value="manual"> 8. Manual Annotation</label>
+            </div>
+
+            <div class="actions" style="display: flex; gap: 0.5rem; margin-top: auto;">
+                <button id="draw-btn" class="btn" style="background:#f59e0b; color:white;">Draw Door (i)</button>
+                <button id="export-btn" class="btn primary">Export Verified CSV</button>
+            </div>
+            <div class="legend">
+                <h3>Legend</h3>
+                <div class="legend-item"><span class="color-box" style="background:#3b82f6"></span> CAD Wall Vectors</div>
+                <div class="legend-item"><span class="color-box" style="background:#eab308"></span> Door Vectors</div>
+                <div class="legend-item"><span class="color-dot" style="background:#f59e0b"></span> Door Centerpoint</div>
+            </div>
+            
+            <p class="instructions">Click on any yellow door line to audit it.<br><br>First click: <span style="color:var(--success)">Approve</span><br>Second click: <span style="color:var(--danger)">Reject/Delete</span></p>
+        </aside>
+        <main id="map"></main>
+    </div>
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    <script src="app.js"></script>
+</body>
+</html>
