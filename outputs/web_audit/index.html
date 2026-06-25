@@ -27,8 +27,10 @@
                 </div>
             </div>
             
-            <div class="toggles" style="background: rgba(0,0,0,0.2); padding: 1rem; border-radius: 8px;">
+            <div class="toggles" style="background: rgba(0,0,0,0.2); padding: 1rem; border-radius: 8px; max-height: 60vh; overflow-y: auto;">
                 <h3>Algorithm Selection</h3>
+                
+                <h4 style="margin-bottom: 0.2rem; color: #60a5fa;">Category 1: The Original 7</h4>
                 <label><input type="radio" name="doorLayer" value="og"> 1. Original (Spiderweb)</label><br>
                 <label><input type="radio" name="doorLayer" value="greedy" checked> 2. Greedy (Nearest Neighbor)</label><br>
                 <label><input type="radio" name="doorLayer" value="collinear"> 3. Collinear (Straight Walls)</label><br>
@@ -36,7 +38,26 @@
                 <label><input type="radio" name="doorLayer" value="native"> 5. Shapefile-Native</label><br>
                 <label><input type="radio" name="doorLayer" value="local"> 6. Per-Building Local Transform</label><br>
                 <label><input type="radio" name="doorLayer" value="hybrid"> 7. Edge Differencing (Hybrid)</label><br>
-                <label><input type="radio" name="doorLayer" value="manual"> 8. Manual Annotation</label>
+
+                <h4 style="margin-top: 1rem; margin-bottom: 0.2rem; color: #34d399;">Category 2: New Geometric (DXF)</h4>
+                <label><input type="radio" name="doorLayer" value="idea1"> Idea 1: ARC-Based Detection</label><br>
+                <label><input type="radio" name="doorLayer" value="idea2"> Idea 2: Layer-Filtered Gaps</label><br>
+                <label><input type="radio" name="doorLayer" value="idea3"> Idea 3: Closed-Polyline Match</label><br>
+                <label><input type="radio" name="doorLayer" value="idea4"> Idea 4: Per-Building ICP</label><br>
+                <label><input type="radio" name="doorLayer" value="idea6"> Idea 6: Perimeter Coverage Ratio</label><br>
+                <label><input type="radio" name="doorLayer" value="idea7"> Idea 7: Pure DXF Space</label><br>
+
+                <h4 style="margin-top: 1rem; margin-bottom: 0.2rem; color: #fbbf24;">Category 3: Computer Vision & ML</h4>
+                <label><input type="radio" name="doorLayer" value="idea5"> Idea 5: Rasterize DXF Subtract</label><br>
+                <label><input type="radio" name="doorLayer" value="idea8"> Idea 8: CV on Map (Blue Channel)</label><br>
+                <label><input type="radio" name="doorLayer" value="idea9"> Idea 9: Map vs DXF Diff</label><br>
+                <label><input type="radio" name="doorLayer" value="idea10"> Idea 10: Map Registration</label><br>
+                <label><input type="radio" name="doorLayer" value="idea11"> Idea 11: Template Matching</label><br>
+                <label><input type="radio" name="doorLayer" value="idea12"> Idea 12: ML Classifier</label><br>
+                <label><input type="radio" name="doorLayer" value="idea13"> Idea 13: Hybrid ARC + Map CV</label><br>
+
+                <h4 style="margin-top: 1rem; margin-bottom: 0.2rem; color: #f87171;">Category 4: Ground Truth</h4>
+                <label><input type="radio" name="doorLayer" value="manual"> Manual Annotation</label>
             </div>
 
             <div class="actions" style="display: flex; gap: 0.5rem; margin-top: auto;">
